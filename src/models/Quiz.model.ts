@@ -7,8 +7,8 @@ export interface IQuizQuestion {
 }
 
 export interface IQuiz extends Document {
-  course: Types.ObjectId;
-  moduleIndex: number;
+  course?: Types.ObjectId; // Optional for standalone quizzes
+  moduleIndex?: number; // Optional for standalone quizzes
   title: string;
   questions: IQuizQuestion[];
   passingScore: number; // percentage
@@ -43,11 +43,11 @@ const quizSchema = new Schema<IQuiz>({
   course: {
     type: Schema.Types.ObjectId,
     ref: 'Course',
-    required: true
+    required: false // Make optional for standalone quizzes
   },
   moduleIndex: {
     type: Number,
-    required: true,
+    required: false, // Make optional for standalone quizzes
     min: 0
   },
   title: {

@@ -1,12 +1,15 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export interface IAssignment extends Document {
-  student: Types.ObjectId;
+  student?: Types.ObjectId; // Optional for batch assignments
   course: Types.ObjectId;
-  moduleIndex: number;
+  batch?: string; // For batch assignments
+  moduleIndex?: number; // Optional for general assignments
   title: string;
   description: string;
-  submission: {
+  dueDate?: Date;
+  createdBy: Types.ObjectId; // Admin/instructor who created it
+  submission?: {
     answer: string;
     submittedAt: Date;
   };
@@ -22,16 +25,20 @@ const assignmentSchema = new Schema<IAssignment>({
   student: {
     type: Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: false // Optional for batch assignments
   },
   course: {
     type: Schema.Types.ObjectId,
     ref: 'Course',
     required: true
   },
+  batch: {
+    type: String,
+    required: false // For batch assignments
+  },
   moduleIndex: {
     type: Number,
-    required: true,
+    required: false, // Optional for general assignments
     min: 0
   },
   title: {
@@ -43,14 +50,22 @@ const assignmentSchema = new Schema<IAssignment>({
     type: String,
     required: true
   },
+  dueDate: {
+    type: Date,
+    required: false
+  },
+  createdBy: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
   submission: {
     answer: {
       type: String,
-      required: true
+      required: false
     },
     submittedAt: {
-      type: Date,
-      default: Date.now
+      type: Date
     }
   },
   review: {
@@ -64,7 +79,7 @@ const assignmentSchema = new Schema<IAssignment>({
   status: {
     type: String,
     enum: ['pending', 'submitted', 'reviewed'],
-    default: 'submitted'
+    default: 'pending'
   }
 });
 

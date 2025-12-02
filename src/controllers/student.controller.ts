@@ -1,21 +1,16 @@
-import { Response, NextFunction } from 'express';
-import Course from '../models/Course.model';
+import { Request, Response, NextFunction } from 'express';
 import Enrollment from '../models/Enrollment.model';
-import Progress from '../models/Progress.model';
-import Assignment from '../models/Assignment.model';
-import { Quiz, QuizAttempt } from '../models/Quiz.model';
-import { AuthRequest } from '../middleware/auth.middleware';
+import Course from '../models/Course.model';
 import { AppError } from '../middleware/error.middleware';
-import emailService from '../utils/email.util';
 
-// @desc    Get student dashboard
-// @route   GET /api/student/dashboard
-// @access  Private/Student
-export const getDashboard = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+// Get student's enrolled courses
+export const getStudentDashboard = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const enrollments = await Enrollment.find({ student: req.user!._id })
-      .populate('course', 'title thumbnail instructor category')
-      .sort('-enrolledAt');
+    const studentId = (req as any).user._id;
+
+    const enrollments = await Enrollment.find({ student: studentId })
+      .populate('course', 'title thumbnail instructor category batch')
+      .sort({ enrolledAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -26,76 +21,29 @@ export const getDashboard = async (req: AuthRequest, res: Response, next: NextFu
   }
 };
 
-// @desc    Enroll in course
-// @route   POST /api/student/enroll/:courseId
-// @access  Private/Student
-export const enrollCourse = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+// Get specific course for learning
+export const getCourseForLearning = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const course = await Course.findById(req.params.courseId);
+    const { id } = req.params;
+    const studentId = (req as any).user._id;
 
-    if (!course) {
-      throw new AppError('Course not found', 404);
-    }
-
-    // Check if already enrolled
-    const existingEnrollment = await Enrollment.findOne({
-      student: req.user!._id,
-      course: course._id
-    });
-
-    if (existingEnrollment) {
-      throw new AppError('Already enrolled in this course', 400);
-    }
-
-    // Calculate total lessons
-    const totalLessons = course.modules.reduce((sum, module) => sum + module.lessons.length, 0);
-
-    // Create enrollment
-    const enrollment = await Enrollment.create({
-      student: req.user!._id,
-      course: course._id,
-      totalLessons
-    });
-
-    // Send enrollment email (non-blocking)
-    emailService.sendEnrollmentEmail(req.user!.name, req.user!.email, course.title).catch(err =>
-      console.error('Enrollment email failed:', err)
-    );
-
-    res.status(201).json({
-      success: true,
-      enrollment
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Get course content (for enrolled students)
-// @route   GET /api/student/courses/:courseId
-// @access  Private/Student
-export const getCourseContent = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  try {
-    // Check enrollment
-    const enrollment = await Enrollment.findOne({
-      student: req.user!._id,
-      course: req.params.courseId
-    });
-
+    // Check if student is enrolled
+    const enrollment = await Enrollment.findOne({ student: studentId, course: id });
+    
     if (!enrollment) {
-      throw new AppError('Not enrolled in this course', 403);
+      return next(new AppError('You are not enrolled in this course', 403));
     }
 
-    const course = await Course.findById(req.params.courseId);
-    const progress = await Progress.find({
-      student: req.user!._id,
-      course: req.params.courseId
-    });
+    // Get full course details
+    const course = await Course.findById(id);
+    
+    if (!course) {
+      return next(new AppError('Course not found', 404));
+    }
 
     res.status(200).json({
       success: true,
       course,
-      progress,
       enrollment
     });
   } catch (error) {
@@ -103,153 +51,82 @@ export const getCourseContent = async (req: AuthRequest, res: Response, next: Ne
   }
 };
 
-// @desc    Mark lesson as complete
-// @route   POST /api/student/progress
-// @access  Private/Student
-export const markLessonComplete = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+// Mark lesson as complete
+export const markLessonComplete = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { courseId, moduleIndex, lessonIndex } = req.body;
+    const { id } = req.params; // enrollment id
+    const studentId = (req as any).user._id;
 
-    // Check enrollment
-    const enrollment = await Enrollment.findOne({
-      student: req.user!._id,
-      course: courseId
-    });
+    const enrollment = await Enrollment.findOne({ _id: id, student: studentId })
+      .populate('course');
 
     if (!enrollment) {
-      throw new AppError('Not enrolled in this course', 403);
+      return next(new AppError('Enrollment not found', 404));
     }
 
-    // Create or update progress
-    await Progress.findOneAndUpdate(
-      {
-        student: req.user!._id,
-        course: courseId,
-        moduleIndex,
-        lessonIndex
-      },
-      {
-        student: req.user!._id,
-        course: courseId,
-        moduleIndex,
-        lessonIndex
-      },
-      { upsert: true, new: true }
-    );
+    // Check if totalLessons is 0 to prevent division by zero
+    if (enrollment.totalLessons === 0) {
+      return next(new AppError('Course has no lessons', 400));
+    }
 
-    // Update enrollment progress
-    const completedLessons = await Progress.countDocuments({
-      student: req.user!._id,
-      course: courseId
-    });
+    // Check if already completed all lessons
+    if (enrollment.completedLessons >= enrollment.totalLessons) {
+      res.status(200).json({
+        success: true,
+        message: 'All lessons already completed',
+        enrollment
+      });
+      return;
+    }
 
-    const progress = Math.round((completedLessons / enrollment.totalLessons) * 100);
-    const isCompleted = progress === 100;
+    // Increment completed lessons count
+    enrollment.completedLessons = enrollment.completedLessons + 1;
 
-    await Enrollment.findByIdAndUpdate(enrollment._id, {
-      completedLessons,
-      progress,
-      isCompleted,
-      ...(isCompleted && { completedAt: new Date() })
-    });
+    // Calculate progress - safely handle division
+    const totalLessons = enrollment.totalLessons;
+    enrollment.progress = totalLessons > 0 
+      ? Math.round((enrollment.completedLessons / totalLessons) * 100)
+      : 0;
+
+    // Check if course is completed
+    if (enrollment.completedLessons >= totalLessons) {
+      enrollment.isCompleted = true;
+      enrollment.completedAt = new Date();
+    }
+
+    await enrollment.save();
 
     res.status(200).json({
       success: true,
       message: 'Lesson marked as complete',
-      progress
+      enrollment
     });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Submit assignment
-// @route   POST /api/student/assignments
-// @access  Private/Student
-export const submitAssignment = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+// Get enrollment progress details
+export const getEnrollmentProgress = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { courseId, moduleIndex, title, description, answer } = req.body;
+    const { id } = req.params;
+    const studentId = (req as any).user._id;
 
-    // Check enrollment
-    const enrollment = await Enrollment.findOne({
-      student: req.user!._id,
-      course: courseId
-    });
+    const enrollment = await Enrollment.findOne({ _id: id, student: studentId })
+      .populate('course');
 
     if (!enrollment) {
-      throw new AppError('Not enrolled in this course', 403);
+      return next(new AppError('Enrollment not found', 404));
     }
 
-    const assignment = await Assignment.create({
-      student: req.user!._id,
-      course: courseId,
-      moduleIndex,
-      title,
-      description,
-      submission: {
-        answer,
-        submittedAt: new Date()
-      },
-      status: 'submitted'
-    });
-
-    res.status(201).json({
+    res.status(200).json({
       success: true,
-      assignment
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// @desc    Take quiz
-// @route   POST /api/student/quizzes/:quizId/attempt
-// @access  Private/Student
-export const takeQuiz = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  try {
-    const { answers } = req.body;
-    const quiz = await Quiz.findById(req.params.quizId);
-
-    if (!quiz) {
-      throw new AppError('Quiz not found', 404);
-    }
-
-    // Check enrollment
-    const enrollment = await Enrollment.findOne({
-      student: req.user!._id,
-      course: quiz.course
-    });
-
-    if (!enrollment) {
-      throw new AppError('Not enrolled in this course', 403);
-    }
-
-    // Calculate score
-    let correctAnswers = 0;
-    quiz.questions.forEach((question, index) => {
-      if (question.correctAnswer === answers[index]) {
-        correctAnswers++;
+      progress: {
+        completedLessons: enrollment.completedLessons,
+        totalLessons: enrollment.totalLessons,
+        percentage: enrollment.progress,
+        isCompleted: enrollment.isCompleted
       }
-    });
-
-    const score = Math.round((correctAnswers / quiz.questions.length) * 100);
-    const passed = score >= quiz.passingScore;
-
-    const attempt = await QuizAttempt.create({
-      student: req.user!._id,
-      quiz: quiz._id,
-      answers,
-      score,
-      passed
-    });
-
-    res.status(201).json({
-      success: true,
-      score,
-      passed,
-      correctAnswers,
-      totalQuestions: quiz.questions.length,
-      attempt
     });
   } catch (error) {
     next(error);

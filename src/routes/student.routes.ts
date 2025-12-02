@@ -1,26 +1,26 @@
 import express from 'express';
 import {
-  getDashboard,
-  enrollCourse,
-  getCourseContent,
+  getStudentDashboard,
+  getCourseForLearning,
   markLessonComplete,
-  submitAssignment,
-  takeQuiz
+  getEnrollmentProgress
 } from '../controllers/student.controller';
 import { protect, authorize } from '../middleware/auth.middleware';
-import { validate } from '../middleware/validation.middleware';
 
 const router = express.Router();
 
-// All routes are protected and for students only
+// All routes require student authentication
 router.use(protect);
 router.use(authorize('student'));
 
-router.get('/dashboard', getDashboard);
-router.post('/enroll/:courseId', enrollCourse);
-router.get('/courses/:courseId', getCourseContent);
-router.post('/progress', markLessonComplete);
-router.post('/assignments', validate('assignment'), submitAssignment);
-router.post('/quizzes/:quizId/attempt', takeQuiz);
+// Dashboard
+router.get('/dashboard', getStudentDashboard);
+
+// Course Learning
+router.get('/course/:id/learn', getCourseForLearning);
+
+// Progress Tracking
+router.put('/enrollments/:id/lesson/complete', markLessonComplete);
+router.get('/enrollments/:id/progress', getEnrollmentProgress);
 
 export default router;
