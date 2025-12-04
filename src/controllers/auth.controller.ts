@@ -8,6 +8,43 @@ import emailService from "../utils/email.util";
 // Generate JWT Token
 const generateToken = (id: string): string => {
   const expiresIn = (process.env.JWT_EXPIRE || "7d") as string;
+  return jwt.sign({ id }, process.env.JWT_SECRET!, {
+    expiresIn,
+  } as jwt.SignOptions);
+};
+
+// Send token response
+const sendTokenResponse = (
+  user: any,
+  statusCode: number,
+  res: Response
+): void => {
+  const token = generateToken(user._id);
+
+  const options = {
+    expires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+    httpOnly: true,
+    secure: true, // Always true (required for sameSite: 'none')
+    sameSite: "none" as const, // Changed from 'strict' to 'none' for cross-origin
+  };
+
+  res
+    .status(statusCode)
+    .cookie("token", token, options)
+    .json({
+      success: true,
+      token,
+      user: {
+        _id: user._id, // Added for frontend compatibility
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+};
+
+// @desc    Register user
 // @route   POST /api/auth/register
 // @access  Public
 export const register = async (
@@ -112,6 +149,7 @@ export const getMe = async (
     res.status(200).json({
       success: true,
       user: {
+        _id: user!._id,
         id: user!._id,
         name: user!.name,
         email: user!.email,
