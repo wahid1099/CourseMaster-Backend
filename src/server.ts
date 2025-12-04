@@ -19,13 +19,67 @@ import chatRoutes from "./routes/chat.routes";
 import { errorHandler } from "./middleware/error.middleware";
 import redisClient from "./utils/redis.util";
 import Chat from "./models/Chat.model";
-if (!origin) return callback(null, true);
 
-if (allowedOrigins.indexOf(origin) !== -1) {
-  callback(null, true);
-} else {
-  callback(new Error("Not allowed by CORS"));
-}
+// Load env vars
+dotenv.config();
+
+const app: Application = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: [
+      process.env.FRONTEND_URL || "",
+      "http://localhost:5173",
+      "http://localhost:3000",
+      "https://misun-academy.netlify.app",
+    ].filter(Boolean),
+    credentials: true,
+  },
+});
+
+// Body parser
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Cookie parser
+app.use(cookieParser());
+
+// Enable CORS
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://misun-academy.netlify.app",
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+  })
+);
+
+// Connect to MongoDB
+const connectDB = async (): Promise<void> => {
+  try {
+    await mongoose.connect(
+      process.env.MONGODB_URI || "mongodb://localhost:27017/coursemaster"
+    );
+    console.log("✅ MongoDB connected");
+  } catch (error) {
+    console.error("❌ MongoDB connection error:", error);
+    process.exit(1);
+  }
+};
 
 // Connect to Redis
 const connectRedis = async (): Promise<void> => {
