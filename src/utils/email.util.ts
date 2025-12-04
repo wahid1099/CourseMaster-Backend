@@ -1,4 +1,4 @@
-import nodemailer, { Transporter } from 'nodemailer';
+import nodemailer, { Transporter } from "nodemailer";
 
 interface EmailOptions {
   to: string;
@@ -8,46 +8,96 @@ interface EmailOptions {
 
 class EmailService {
   private transporter: Transporter | null = null;
+  private initialized: boolean = false;
 
   constructor() {
-    this.createTransporter();
+    // Don't initialize here - wait for first use
+  }
+
+  private ensureInitialized(): void {
+    if (!this.initialized) {
+      this.createTransporter();
+      this.initialized = true;
+    }
   }
 
   private createTransporter(): void {
     try {
+      // Log environment variables (without password)
+      console.log("📧 Initializing email service...");
+      console.log("Email Host:", process.env.EMAIL_HOST);
+      console.log("Email Port:", process.env.EMAIL_PORT);
+      console.log("Email User:", process.env.EMAIL_USER);
+      console.log("Email Password configured:", !!process.env.EMAIL_PASSWORD);
+
       this.transporter = nodemailer.createTransport({
+        service: "gmail", // Explicitly use Gmail
         host: process.env.EMAIL_HOST,
-        port: parseInt(process.env.EMAIL_PORT || '587'),
-        secure: false,
+        port: parseInt(process.env.EMAIL_PORT || "587"),
+        secure: false, // true for 465, false for other ports
         auth: {
           user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASSWORD
-        }
+          pass: process.env.EMAIL_PASSWORD,
+        },
+        tls: {
+          rejectUnauthorized: false, // Accept self-signed certificates
+        },
+        requireTLS: true, // Enforce TLS
       });
-      console.log('✅ Email service configured');
+
+      // Verify connection
+      this.verifyConnection();
     } catch (error) {
-      console.error('Email service configuration failed:', error);
-      console.log('⚠️  Continuing without email notifications');
+      console.error("❌ Email service configuration failed:", error);
+      console.log("⚠️  Continuing without email notifications");
+    }
+  }
+
+  private async verifyConnection(): Promise<void> {
+    if (!this.transporter) return;
+
+    try {
+      await this.transporter.verify();
+      console.log("✅ Email service configured and verified");
+    } catch (error: any) {
+      console.error("❌ Email verification failed:", {
+        message: error.message,
+        code: error.code,
+        command: error.command,
+      });
     }
   }
 
   async sendEmail(options: EmailOptions): Promise<boolean> {
+    this.ensureInitialized();
+
     if (!this.transporter) {
-      console.log('Email service not available');
+      console.log("❌ Email service not available - transporter is null");
       return false;
     }
 
     try {
-      await this.transporter.sendMail({
+      console.log(`📤 Attempting to send email to ${options.to}...`);
+      const info = await this.transporter.sendMail({
         from: `CourseMaster <${process.env.EMAIL_USER}>`,
         to: options.to,
         subject: options.subject,
-        html: options.html
+        html: options.html,
       });
-      console.log(`✅ Email sent to ${options.to}`);
+      console.log(`✅ Email sent successfully to ${options.to}`, {
+        messageId: info.messageId,
+        response: info.response,
+      });
       return true;
-    } catch (error) {
-      console.error('Email sending failed:', error);
+    } catch (error: any) {
+      console.error("❌ Email sending failed:", {
+        to: options.to,
+        error: error.message,
+        code: error.code,
+        command: error.command,
+        responseCode: error.responseCode,
+        response: error.response,
+      });
       return false;
     }
   }
@@ -75,7 +125,9 @@ class EmailService {
               <h2>Hello ${name}!</h2>
               <p>Thank you for joining CourseMaster, your gateway to world-class education.</p>
               <p>We're excited to have you on board. Start exploring our courses and begin your learning journey today!</p>
-              <a href="${process.env.FRONTEND_URL}" class="button">Explore Courses</a>
+              <a href="${
+                process.env.FRONTEND_URL
+              }" class="button">Explore Courses</a>
               <p style="margin-top: 30px;">If you have any questions, feel free to reach out to our support team.</p>
             </div>
             <div class="footer">
@@ -88,12 +140,16 @@ class EmailService {
 
     return await this.sendEmail({
       to: email,
-      subject: 'Welcome to CourseMaster! 🎓',
-      html
+      subject: "Welcome to CourseMaster! 🎓",
+      html,
     });
   }
 
-  async sendEnrollmentEmail(name: string, email: string, courseTitle: string): Promise<boolean> {
+  async sendEnrollmentEmail(
+    name: string,
+    email: string,
+    courseTitle: string
+  ): Promise<boolean> {
     const html = `
       <!DOCTYPE html>
       <html>
@@ -129,7 +185,7 @@ class EmailService {
     return await this.sendEmail({
       to: email,
       subject: `Enrolled: ${courseTitle}`,
-      html
+      html,
     });
   }
 }
