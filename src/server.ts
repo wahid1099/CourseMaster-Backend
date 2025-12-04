@@ -19,23 +19,6 @@ import chatRoutes from "./routes/chat.routes";
 import { errorHandler } from "./middleware/error.middleware";
 import redisClient from "./utils/redis.util";
 import Chat from "./models/Chat.model";
-
-// Load env vars
-// Cookie parser
-app.use(cookieParser());
-
-// Enable CORS
-const allowedOrigins = [
-  process.env.FRONTEND_URL,
-  "http://localhost:5173",
-  "http://localhost:3000",
-  "https://misun-academy.netlify.app", // Add your Netlify URL here
-].filter(Boolean);
-
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or curl requests)
       if (!origin) return callback(null, true);
 
       if (allowedOrigins.indexOf(origin) !== -1) {
