@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import mongoose from "mongoose";
 import Assignment from "../models/Assignment.model";
 import { AppError } from "../middleware/error.middleware";
+import redisClient from "../utils/redis.util";
 
 // Get all assignments with filters
 export const getAllAssignments = async (
@@ -12,6 +13,22 @@ export const getAllAssignments = async (
   try {
     const { course, student, status, page = 1, limit = 20, search } = req.query;
     const user = (req as any).user;
+
+    // Build cache key based on user and filters
+    const cacheKey = `assignments:all:${user._id}:${JSON.stringify({
+      course,
+      student,
+      status,
+      page,
+      limit,
+      search,
+    })}`;
+    const cachedData = await redisClient.get(cacheKey);
+
+    if (cachedData) {
+      res.status(200).json(JSON.parse(cachedData));
+      return;
+    }
 
     const query: any = {};
 
@@ -67,13 +84,18 @@ export const getAllAssignments = async (
 
     const total = await Assignment.countDocuments(query);
 
-    res.status(200).json({
+    const response = {
       success: true,
       assignments,
       total,
       pages: Math.ceil(total / Number(limit)),
       currentPage: Number(page),
-    });
+    };
+
+    // Cache for 15 minutes
+    await redisClient.set(cacheKey, JSON.stringify(response), 900);
+
+    res.status(200).json(response);
   } catch (error) {
     next(error);
   }
@@ -89,6 +111,15 @@ export const getAssignmentsByCourse = async (
     const { id } = req.params;
     const user = (req as any).user;
 
+    // Build cache key based on course and user
+    const cacheKey = `assignments:course:${id}:${user._id}`;
+    const cachedData = await redisClient.get(cacheKey);
+
+    if (cachedData) {
+      res.status(200).json(JSON.parse(cachedData));
+      return;
+    }
+
     const query: any = { course: id };
 
     // Students can only see their own assignments
@@ -101,11 +132,16 @@ export const getAssignmentsByCourse = async (
       .populate("review.reviewedBy", "name")
       .sort({ "submission.submittedAt": -1 });
 
-    res.status(200).json({
+    const response = {
       success: true,
       assignments,
       total: assignments.length,
-    });
+    };
+
+    // Cache for 15 minutes
+    await redisClient.set(cacheKey, JSON.stringify(response), 900);
+
+    res.status(200).json(response);
   } catch (error) {
     next(error);
   }
@@ -125,6 +161,15 @@ export const getPendingAssignments = async (
       return next(new AppError("Not authorized to access this resource", 403));
     }
 
+    // Cache key for pending assignments
+    const cacheKey = `assignments:pending`;
+    const cachedData = await redisClient.get(cacheKey);
+
+    if (cachedData) {
+      res.status(200).json(JSON.parse(cachedData));
+      return;
+    }
+
     const assignments = await Assignment.find({
       status: { $in: ["pending", "submitted"] },
     })
@@ -132,11 +177,16 @@ export const getPendingAssignments = async (
       .populate("course", "title category")
       .sort({ "submission.submittedAt": -1 });
 
-    res.status(200).json({
+    const response = {
       success: true,
       assignments,
       total: assignments.length,
-    });
+    };
+
+    // Cache for 5 minutes (more dynamic data)
+    await redisClient.set(cacheKey, JSON.stringify(response), 300);
+
+    res.status(200).json(response);
   } catch (error) {
     next(error);
   }
@@ -212,6 +262,9 @@ export const reviewAssignment = async (
     assignment.status = "reviewed";
 
     await assignment.save();
+
+    // Clear assignment caches
+    await redisClient.delPattern("assignments:*");
 
     const updatedAssignment = await Assignment.findById(id)
       .populate("student", "name email")
@@ -356,6 +409,9 @@ export const submitAssignment = async (
       assignment.status = "submitted";
       await assignment.save();
     }
+
+    // Clear assignment caches
+    await redisClient.delPattern("assignments:*");
 
     res.status(200).json({
       success: true,

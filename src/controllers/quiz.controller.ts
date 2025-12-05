@@ -1,49 +1,89 @@
-import { Request, Response, NextFunction } from 'express';
-import { Quiz } from '../models/Quiz.model';
-import QuizResult from '../models/QuizResult.model';
-import { AppError } from '../middleware/error.middleware';
+import { Request, Response, NextFunction } from "express";
+import { Quiz } from "../models/Quiz.model";
+import QuizResult from "../models/QuizResult.model";
+import { AppError } from "../middleware/error.middleware";
+import redisClient from "../utils/redis.util";
 
 // Get all quizzes for a course
-export const getQuizzesByCourse = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const getQuizzesByCourse = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const { courseId } = req.params;
 
+    // Try to get from cache
+    const cacheKey = `quizzes:course:${courseId}`;
+    const cachedData = await redisClient.get(cacheKey);
+
+    if (cachedData) {
+      res.status(200).json(JSON.parse(cachedData));
+      return;
+    }
+
     const quizzes = await Quiz.find({ course: courseId })
-      .select('-questions.correctAnswer') // Don't send correct answers
+      .select("-questions.correctAnswer") // Don't send correct answers
       .sort({ moduleIndex: 1 });
 
-    res.status(200).json({
+    const response = {
       success: true,
-      quizzes
-    });
+      quizzes,
+    };
+
+    // Cache for 1 hour
+    await redisClient.set(cacheKey, JSON.stringify(response), 3600);
+
+    res.status(200).json(response);
   } catch (error) {
     next(error);
   }
 };
 
 // Get quiz by ID (for taking quiz)
-export const getQuizById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const getQuizById = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const { id } = req.params;
 
-    const quiz = await Quiz.findById(id)
-      .select('-questions.correctAnswer'); // Don't send correct answers
+    // Try to get from cache
+    const cacheKey = `quiz:${id}`;
+    const cachedData = await redisClient.get(cacheKey);
 
-    if (!quiz) {
-      return next(new AppError('Quiz not found', 404));
+    if (cachedData) {
+      res.status(200).json(JSON.parse(cachedData));
+      return;
     }
 
-    res.status(200).json({
+    const quiz = await Quiz.findById(id).select("-questions.correctAnswer"); // Don't send correct answers
+
+    if (!quiz) {
+      return next(new AppError("Quiz not found", 404));
+    }
+
+    const response = {
       success: true,
-      quiz
-    });
+      quiz,
+    };
+
+    // Cache for 1 hour
+    await redisClient.set(cacheKey, JSON.stringify(response), 3600);
+
+    res.status(200).json(response);
   } catch (error) {
     next(error);
   }
 };
 
 // Submit quiz
-export const submitQuiz = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const submitQuiz = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const { id } = req.params;
     const { answers, timeSpent } = req.body; // answers is array of selected option indices
@@ -52,13 +92,16 @@ export const submitQuiz = async (req: Request, res: Response, next: NextFunction
     const quiz = await Quiz.findById(id);
 
     if (!quiz) {
-      return next(new AppError('Quiz not found', 404));
+      return next(new AppError("Quiz not found", 404));
     }
 
     // Calculate score
     let score = 0;
-    const totalPoints = quiz.questions.reduce((sum: number, q: any) => sum + (q.points || 1), 0);
-    
+    const totalPoints = quiz.questions.reduce(
+      (sum: number, q: any) => sum + (q.points || 1),
+      0
+    );
+
     const results = quiz.questions.map((question: any, index: number) => {
       const isCorrect = answers[index] === question.correctAnswer;
       const questionPoints = question.points || 1;
@@ -70,7 +113,7 @@ export const submitQuiz = async (req: Request, res: Response, next: NextFunction
         selectedAnswer: answers[index],
         correctAnswer: question.correctAnswer,
         isCorrect,
-        points: isCorrect ? questionPoints : 0
+        points: isCorrect ? questionPoints : 0,
       };
     });
 
@@ -87,20 +130,24 @@ export const submitQuiz = async (req: Request, res: Response, next: NextFunction
       totalPoints,
       percentage,
       passed,
-      timeSpent: timeSpent || 0
+      timeSpent: timeSpent || 0,
     });
+
+    // Clear quiz cache (in case quiz data needs to be refreshed)
+    await redisClient.del(`quiz:${id}`);
+    await redisClient.del(`quizzes:course:${quiz.course}`);
 
     res.status(200).json({
       success: true,
-      message: 'Quiz submitted successfully',
+      message: "Quiz submitted successfully",
       result: {
         score,
         totalPoints,
         percentage,
         passed,
         results,
-        quizResultId: quizResult._id
-      }
+        quizResultId: quizResult._id,
+      },
     });
   } catch (error) {
     next(error);
@@ -108,7 +155,11 @@ export const submitQuiz = async (req: Request, res: Response, next: NextFunction
 };
 
 // Get quiz history for student
-export const getQuizHistory = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const getQuizHistory = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const studentId = (req as any).user._id;
     const { courseId } = req.query;
@@ -117,13 +168,13 @@ export const getQuizHistory = async (req: Request, res: Response, next: NextFunc
     if (courseId) query.course = courseId;
 
     const history = await QuizResult.find(query)
-      .populate('quiz', 'title moduleIndex')
-      .populate('course', 'title')
+      .populate("quiz", "title moduleIndex")
+      .populate("course", "title")
       .sort({ submittedAt: -1 });
 
     res.status(200).json({
       success: true,
-      history
+      history,
     });
   } catch (error) {
     next(error);
@@ -131,22 +182,26 @@ export const getQuizHistory = async (req: Request, res: Response, next: NextFunc
 };
 
 // Get specific quiz result details
-export const getQuizResult = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const getQuizResult = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const { id } = req.params;
     const studentId = (req as any).user._id;
 
     const result = await QuizResult.findOne({ _id: id, student: studentId })
-      .populate('quiz')
-      .populate('course', 'title');
+      .populate("quiz")
+      .populate("course", "title");
 
     if (!result) {
-      return next(new AppError('Quiz result not found', 404));
+      return next(new AppError("Quiz result not found", 404));
     }
 
     res.status(200).json({
       success: true,
-      result
+      result,
     });
   } catch (error) {
     next(error);

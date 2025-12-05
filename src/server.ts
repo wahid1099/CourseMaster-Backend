@@ -1,8 +1,10 @@
-import express, { Application } from "express";
+import express, { Application, Request, Response } from "express";
 import mongoose from "mongoose";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
+import swaggerUi from "swagger-ui-express";
+import swaggerSpec from "./config/swagger.config";
 import authRoutes from "./routes/auth.routes";
 import courseRoutes from "./routes/course.routes";
 import studentRoutes from "./routes/student.routes";
@@ -88,9 +90,127 @@ app.use("/api/student/assignments", assignmentRoutes);
 app.use("/api/quizzes", quizRoutes);
 app.use("/api/chat", chatRoutes);
 
-// Health check
-app.get("/health", (_req, res) => {
-  res.status(200).json({ success: true, message: "Server is running" });
+// API Documentation
+app.use(
+  "/api-docs",
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, {
+    customCss: ".swagger-ui .topbar { display: none }",
+    customSiteTitle: "Misun Academy API Documentation",
+  })
+);
+
+/**
+ * @swagger
+ * /:
+ *   get:
+ *     summary: API Welcome Message
+ *     description: Returns welcome message and API information
+ *     tags: [Health]
+ *     responses:
+ *       200:
+ *         description: Welcome message with API details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Welcome to Misun Academy API
+ *                 version:
+ *                   type: string
+ *                   example: 1.0.0
+ *                 documentation:
+ *                   type: string
+ *                   example: /api-docs
+ *                 health:
+ *                   type: string
+ *                   example: /health
+ *                 endpoints:
+ *                   type: object
+ */
+app.get("/", (_req: Request, res: Response) => {
+  res.status(200).json({
+    success: true,
+    message: "Welcome to Misun Academy API",
+    version: "1.0.0",
+    documentation: "/api-docs",
+    health: "/health",
+    endpoints: {
+      auth: "/api/auth",
+      courses: "/api/courses",
+      quizzes: "/api/quizzes",
+      assignments: "/api/student/assignments",
+      enrollments: "/api/admin/enrollments",
+      users: "/api/admin/users",
+      chat: "/api/chat",
+    },
+  });
+});
+
+/**
+ * @swagger
+ * /health:
+ *   get:
+ *     summary: Health Check
+ *     description: Returns detailed system health status including database and cache connections
+ *     tags: [Health]
+ *     responses:
+ *       200:
+ *         description: System health status
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 status:
+ *                   type: string
+ *                   example: healthy
+ *                 timestamp:
+ *                   type: string
+ *                   format: date-time
+ *                 uptime:
+ *                   type: number
+ *                   example: 12345
+ *                 services:
+ *                   type: object
+ *                 memory:
+ *                   type: object
+ */
+app.get("/health", (_req: Request, res: Response) => {
+  const memoryUsage = process.memoryUsage();
+  const healthStatus = {
+    success: true,
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    services: {
+      database: {
+        status:
+          mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+        type: "MongoDB",
+      },
+      cache: {
+        status: redisClient ? "configured" : "not configured",
+        type: "Redis",
+      },
+    },
+    memory: {
+      used: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB`,
+      total: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`,
+      rss: `${Math.round(memoryUsage.rss / 1024 / 1024)} MB`,
+    },
+    environment: process.env.NODE_ENV || "development",
+  };
+
+  res.status(200).json(healthStatus);
 });
 
 // Error handler (must be last)

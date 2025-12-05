@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import Enrollment from "../models/Enrollment.model";
 import { AppError } from "../middleware/error.middleware";
+import redisClient from "../utils/redis.util";
 
 // Get all enrollments with filters
 export const getAllEnrollments = async (
@@ -10,6 +11,22 @@ export const getAllEnrollments = async (
 ): Promise<void> => {
   try {
     const { course, student, status, page = 1, limit = 20, search } = req.query;
+
+    // Build cache key
+    const cacheKey = `enrollments:all:${JSON.stringify({
+      course,
+      student,
+      status,
+      page,
+      limit,
+      search,
+    })}`;
+    const cachedData = await redisClient.get(cacheKey);
+
+    if (cachedData) {
+      res.status(200).json(JSON.parse(cachedData));
+      return;
+    }
 
     const query: any = {};
 
@@ -41,13 +58,18 @@ export const getAllEnrollments = async (
 
     const total = await Enrollment.countDocuments(query);
 
-    res.status(200).json({
+    const response = {
       success: true,
       enrollments,
       total,
       pages: Math.ceil(total / Number(limit)),
       currentPage: Number(page),
-    });
+    };
+
+    // Cache for 15 minutes
+    await redisClient.set(cacheKey, JSON.stringify(response), 900);
+
+    res.status(200).json(response);
   } catch (error) {
     next(error);
   }
@@ -62,15 +84,29 @@ export const getEnrollmentsByCourse = async (
   try {
     const { id } = req.params;
 
+    // Build cache key
+    const cacheKey = `enrollments:course:${id}`;
+    const cachedData = await redisClient.get(cacheKey);
+
+    if (cachedData) {
+      res.status(200).json(JSON.parse(cachedData));
+      return;
+    }
+
     const enrollments = await Enrollment.find({ course: id })
       .populate("student", "name email avatar")
       .sort({ enrolledAt: -1 });
 
-    res.status(200).json({
+    const response = {
       success: true,
       enrollments,
       total: enrollments.length,
-    });
+    };
+
+    // Cache for 15 minutes
+    await redisClient.set(cacheKey, JSON.stringify(response), 900);
+
+    res.status(200).json(response);
   } catch (error) {
     next(error);
   }
@@ -85,6 +121,15 @@ export const getEnrollmentsByBatch = async (
   try {
     const { name } = req.params;
 
+    // Build cache key
+    const cacheKey = `enrollments:batch:${name}`;
+    const cachedData = await redisClient.get(cacheKey);
+
+    if (cachedData) {
+      res.status(200).json(JSON.parse(cachedData));
+      return;
+    }
+
     // First, find courses with this batch name
     const Course = require("../models/Course.model").default;
     const courses = await Course.find({ "batch.name": name }).select("_id");
@@ -95,12 +140,17 @@ export const getEnrollmentsByBatch = async (
       .populate("course", "title batch")
       .sort({ enrolledAt: -1 });
 
-    res.status(200).json({
+    const response = {
       success: true,
       batch: name,
       enrollments,
       total: enrollments.length,
-    });
+    };
+
+    // Cache for 15 minutes
+    await redisClient.set(cacheKey, JSON.stringify(response), 900);
+
+    res.status(200).json(response);
   } catch (error) {
     next(error);
   }
@@ -113,6 +163,15 @@ export const getEnrollmentStats = async (
   next: NextFunction
 ): Promise<void> => {
   try {
+    // Build cache key
+    const cacheKey = `enrollments:stats`;
+    const cachedData = await redisClient.get(cacheKey);
+
+    if (cachedData) {
+      res.status(200).json(JSON.parse(cachedData));
+      return;
+    }
+
     const totalEnrollments = await Enrollment.countDocuments();
     const activeEnrollments = await Enrollment.countDocuments({
       isCompleted: false,
@@ -157,7 +216,7 @@ export const getEnrollmentStats = async (
       },
     ]);
 
-    res.status(200).json({
+    const response = {
       success: true,
       stats: {
         total: totalEnrollments,
@@ -165,7 +224,12 @@ export const getEnrollmentStats = async (
         completed: completedEnrollments,
         byCourse,
       },
-    });
+    };
+
+    // Cache for 15 minutes
+    await redisClient.set(cacheKey, JSON.stringify(response), 900);
+
+    res.status(200).json(response);
   } catch (error) {
     next(error);
   }
@@ -242,6 +306,9 @@ export const enrollInCourse = async (
       completedLessons: 0,
       isCompleted: false,
     });
+
+    // Clear enrollment caches
+    await redisClient.delPattern("enrollments:*");
 
     res.status(201).json({
       success: true,
