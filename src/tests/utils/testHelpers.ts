@@ -8,8 +8,8 @@ import mongoose from "mongoose";
  * Generate JWT token for testing
  */
 export const generateTestToken = (userId: string): string => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET!, {
-    expiresIn: process.env.JWT_EXPIRE || "7d",
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET as string, {
+    expiresIn: "7d",
   });
 };
 
